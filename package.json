@@ -8,7 +8,10 @@
     "build": "tsc",
     "audit": "tsx src/cli/index.ts audit",
     "start": "tsx src/cli/index.ts",
-    "dev": "tsx watch src/cli/index.ts"
+    "dev": "tsx watch src/cli/index.ts",
+    "dashboard": "cd dashboard && npm run dev",
+    "dashboard:build": "cd dashboard && npm run build",
+    "dashboard:install": "cd dashboard && npm install"
   },
   "keywords": ["seo", "audit", "agency", "aeo", "backlinks", "keywords", "search-console"],
   "license": "UNLICENSED",
