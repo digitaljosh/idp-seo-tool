@@ -1,4 +1,4 @@
-import type { AuditReport, AnalyzerResult, Finding, SEOTask, TaskPhase } from '../types.js';
+import type { AuditReport, AnalyzerResult, Finding, SEOTask, TaskPhase, GSCData, CompetitorComparison } from '../types.js';
 import { getGrade, getSeverityColor, getScoreColor } from '../utils/scoring.js';
 import fs from 'fs';
 import path from 'path';
@@ -28,6 +28,8 @@ export function generateReport(report: AuditReport): string {
     ${renderExecutiveSummary(report)}
     ${renderScoreCards(report)}
     ${report.categories.map(cat => renderCategorySection(cat)).join('\n')}
+    ${report.gscData ? renderGSCSection(report.gscData) : ''}
+    ${report.comparison ? renderCompetitorSection(report.comparison) : ''}
     ${renderTaskPlan(report)}
     ${renderFooter(report)}
   </div>
@@ -284,10 +286,145 @@ function renderTask(task: SEOTask): string {
     </div>`;
 }
 
+function renderGSCSection(gscData: GSCData): string {
+  const sa = gscData.searchAnalytics;
+
+  const topQueriesRows = sa.topQueries.slice(0, 20).map(q => `
+    <tr>
+      <td>${escapeHtml(q.query)}</td>
+      <td class="num">${q.clicks.toLocaleString()}</td>
+      <td class="num">${q.impressions.toLocaleString()}</td>
+      <td class="num">${q.ctr}%</td>
+      <td class="num">${q.position}</td>
+    </tr>
+  `).join('');
+
+  const topPagesRows = sa.topPages.slice(0, 15).map(p => {
+    const shortPage = p.page.replace(/https?:\/\/[^/]+/, '') || '/';
+    return `
+    <tr>
+      <td title="${escapeHtml(p.page)}">${escapeHtml(shortPage.length > 60 ? shortPage.slice(0, 57) + '...' : shortPage)}</td>
+      <td class="num">${p.clicks.toLocaleString()}</td>
+      <td class="num">${p.impressions.toLocaleString()}</td>
+      <td class="num">${p.ctr}%</td>
+      <td class="num">${p.position}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <section class="gsc-section category-section">
+      <div class="category-header">
+        <h2>Search Console Insights (Last 90 Days)</h2>
+      </div>
+
+      <div class="gsc-summary-grid">
+        <div class="gsc-metric">
+          <div class="gsc-metric-value">${sa.totalClicks.toLocaleString()}</div>
+          <div class="gsc-metric-label">Total Clicks</div>
+        </div>
+        <div class="gsc-metric">
+          <div class="gsc-metric-value">${sa.totalImpressions.toLocaleString()}</div>
+          <div class="gsc-metric-label">Impressions</div>
+        </div>
+        <div class="gsc-metric">
+          <div class="gsc-metric-value">${sa.averageCtr}%</div>
+          <div class="gsc-metric-label">Average CTR</div>
+        </div>
+        <div class="gsc-metric">
+          <div class="gsc-metric-value">${sa.averagePosition}</div>
+          <div class="gsc-metric-label">Avg Position</div>
+        </div>
+      </div>
+
+      <h3 class="subsection-title">Top Search Queries</h3>
+      <table class="data-table">
+        <thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+        <tbody>${topQueriesRows}</tbody>
+      </table>
+
+      <h3 class="subsection-title" style="margin-top:24px;">Top Pages by Traffic</h3>
+      <table class="data-table">
+        <thead><tr><th>Page</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+        <tbody>${topPagesRows}</tbody>
+      </table>
+    </section>`;
+}
+
+function renderCompetitorSection(comparison: CompetitorComparison): string {
+  const clientHost = (() => { try { return new URL(comparison.clientUrl).hostname; } catch { return comparison.clientUrl; } })();
+  const compHosts = comparison.competitors.map(c => {
+    try { return new URL(c.url).hostname; } catch { return c.url; }
+  });
+
+  const catRows = comparison.categoryComparison.map(cat => {
+    const compCells = cat.competitorScores.map(cs => {
+      const color = cs.score >= 80 ? '#16a34a' : cs.score >= 60 ? '#ca8a04' : '#dc2626';
+      return `<td class="num" style="color:${color};font-weight:600;">${cs.score}</td>`;
+    }).join('');
+    const clientColor = cat.clientScore >= 80 ? '#16a34a' : cat.clientScore >= 60 ? '#ca8a04' : '#dc2626';
+    const rankColor = cat.clientRank === 1 ? '#16a34a' : cat.clientRank <= 2 ? '#ca8a04' : '#dc2626';
+    return `<tr>
+      <td>${escapeHtml(cat.categoryLabel)}</td>
+      <td class="num" style="color:${clientColor};font-weight:700;">${cat.clientScore}</td>
+      ${compCells}
+      <td class="num" style="color:${rankColor};font-weight:600;">#${cat.clientRank}</td>
+    </tr>`;
+  }).join('');
+
+  const overallRow = `<tr style="font-weight:700;border-top:2px solid #1a1a2e;">
+    <td>Overall</td>
+    <td class="num">${comparison.clientReport.overallScore}</td>
+    ${comparison.competitors.map(c => `<td class="num">${c.report.overallScore}</td>`).join('')}
+    <td></td>
+  </tr>`;
+
+  const gapsHtml = comparison.gaps.slice(0, 5).map(g => `
+    <div class="gap-item">
+      <span class="gap-badge">${g.scoreDifference}pt gap</span>
+      <span>${escapeHtml(g.finding)}</span>
+    </div>`).join('');
+
+  const strengthsHtml = comparison.strengths.slice(0, 5).map(s => `
+    <div class="strength-item">
+      <span class="strength-badge">+${s.advantage}pt</span>
+      <span>${escapeHtml(s.finding)}</span>
+    </div>`).join('');
+
+  return `
+    <section class="competitor-section category-section">
+      <div class="category-header">
+        <h2>Competitor Comparison</h2>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>${escapeHtml(clientHost)} (You)</th>
+            ${compHosts.map(h => `<th>${escapeHtml(h)}</th>`).join('')}
+            <th>Rank</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${catRows}
+          ${overallRow}
+        </tbody>
+      </table>
+
+      ${comparison.gaps.length > 0 ? `
+      <h3 class="subsection-title" style="margin-top:24px;">Key Gaps (Where Competitors Lead)</h3>
+      <div class="gaps-list">${gapsHtml}</div>` : ''}
+
+      ${comparison.strengths.length > 0 ? `
+      <h3 class="subsection-title" style="margin-top:24px;">Your Advantages</h3>
+      <div class="strengths-list">${strengthsHtml}</div>` : ''}
+    </section>`;
+}
+
 function renderFooter(report: AuditReport): string {
   return `
     <footer class="report-footer">
-      <p>Generated by IDP SEO Tool v1.0</p>
+      <p>Generated by IDP SEO Tool v2.0</p>
       <p>Report generated on ${new Date(report.generatedAt).toLocaleString()} for ${escapeHtml(report.url)}</p>
       <p class="disclaimer">This report provides recommendations based on automated analysis. Some findings may require professional judgment to implement. Scores are relative and should be tracked over time for progress measurement.</p>
     </footer>`;
@@ -804,6 +941,98 @@ function getStyles(): string {
       margin-top: 12px;
       font-style: italic;
       font-size: 12px;
+    }
+
+    /* --- GSC Section --- */
+    .gsc-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .gsc-metric {
+      text-align: center;
+      padding: 20px;
+      border-radius: 10px;
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+    }
+
+    .gsc-metric-value {
+      font-size: 28px;
+      font-weight: 800;
+      color: #0369a1;
+    }
+
+    .gsc-metric-label {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .subsection-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: 12px;
+    }
+
+    /* --- Data Tables --- */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .data-table thead th {
+      background: #f8f9fa;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #e5e7eb;
+      color: #374151;
+    }
+
+    .data-table tbody td {
+      padding: 8px 14px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .data-table tbody tr:hover { background: #f9fafb; }
+
+    .data-table td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* --- Competitor Section --- */
+    .gap-item, .strength-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      font-size: 14px;
+    }
+
+    .gap-badge {
+      background: #fef2f2;
+      color: #dc2626;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .strength-badge {
+      background: #f0fdf4;
+      color: #16a34a;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
     }
 
     /* --- Print styles --- */

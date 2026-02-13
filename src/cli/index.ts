@@ -5,25 +5,18 @@ import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import Table from 'cli-table3';
-import { crawlUrl } from '../utils/crawler.js';
-import { analyzeTechnical } from '../analyzers/technical.js';
-import { analyzeOnPage } from '../analyzers/onpage.js';
-import { analyzePerformance } from '../analyzers/performance.js';
-import { analyzeSchema } from '../analyzers/schema.js';
-import { analyzeAEO } from '../analyzers/aeo.js';
-import { generateTaskPlan } from '../tasks/generator.js';
-import { generateReport, saveReport } from '../reports/generator.js';
-import { calculateOverallScore, getGrade, getScoreColor, getSeverityColor } from '../utils/scoring.js';
-import type { AnalyzerResult, AuditReport, Finding, SEOTask, TaskPhase } from '../types.js';
-import { DEFAULT_CONFIG } from '../types.js';
-import path from 'path';
+import { runCoreAudit, type AuditOptions } from '../core/audit.js';
+import { runCompetitorComparison } from '../core/competitor.js';
+import { saveReport, generateReport } from '../reports/generator.js';
+import { getGrade, getScoreColor } from '../utils/scoring.js';
+import type { AuditReport, CompetitorComparison, TaskPhase } from '../types.js';
 
 const program = new Command();
 
 program
   .name('idp-seo')
   .description('Agency-level SEO audit, task generation, and reporting tool')
-  .version('1.0.0');
+  .version('2.0.0');
 
 program
   .command('audit')
@@ -31,12 +24,21 @@ program
   .option('-u, --url <url>', 'URL to audit')
   .option('-o, --output <dir>', 'Output directory for reports', './reports')
   .option('--api-key <key>', 'Google PageSpeed Insights API key (optional)')
+  .option('--gsc-key <path>', 'Path to Google Search Console service account JSON key file')
   .option('--skip-performance', 'Skip performance analysis (faster)')
+  .option('--skip-gsc', 'Skip Google Search Console analysis')
+  .option('--dfs-login <login>', 'DataforSEO API login')
+  .option('--dfs-password <password>', 'DataforSEO API password')
+  .option('--skip-backlinks', 'Skip backlink analysis')
+  .option('--ke-api-key <key>', 'Keywords Everywhere API key')
+  .option('--skip-keywords', 'Skip keyword intelligence analysis')
+  .option('--seed-keywords <keywords...>', 'Seed keywords for keyword research')
+  .option('-c, --competitors <urls...>', 'Competitor URLs to compare against (up to 3)')
+  .option('-f, --format <format>', 'Output format: html or pdf', 'html')
   .option('--json', 'Output raw JSON instead of interactive display')
   .action(async (options) => {
     let url = options.url;
 
-    // If no URL provided, prompt for it
     if (!url) {
       const answers = await inquirer.prompt([{
         type: 'input',
@@ -51,23 +53,82 @@ program
     }
 
     console.log('');
-    console.log(chalk.bold.white('  IDP SEO Audit Tool v1.0'));
+    console.log(chalk.bold.white('  IDP SEO Audit Tool v2.0'));
     console.log(chalk.gray('  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log('');
 
     try {
-      const report = await runAudit(url, options);
+      let report: AuditReport;
+      let html: string;
+      let comparison: CompetitorComparison | undefined;
+
+      const spinner = ora({ color: 'cyan' });
+
+      const auditOptions: AuditOptions = {
+        url,
+        pageSpeedApiKey: options.apiKey,
+        skipPerformance: options.skipPerformance,
+        gscKeyFile: options.skipGsc ? undefined : options.gscKey,
+        skipSearchConsole: options.skipGsc,
+        dataforseoLogin: options.dfsLogin,
+        dataforseoPassword: options.dfsPassword,
+        skipBacklinks: options.skipBacklinks,
+        keApiKey: options.keApiKey,
+        skipKeywords: options.skipKeywords,
+        seedKeywords: options.seedKeywords,
+        onProgress: (step, detail) => {
+          spinner.text = chalk.cyan(detail || step);
+          if (!spinner.isSpinning) spinner.start();
+        },
+      };
+
+      if (options.competitors && options.competitors.length > 0) {
+        spinner.start(chalk.cyan('Starting competitor comparison audit...'));
+        const compResult = await runCompetitorComparison({
+          ...auditOptions,
+          competitors: options.competitors,
+        });
+        report = compResult.clientResult.report;
+        comparison = compResult.comparison;
+        report.comparison = comparison;
+        html = generateReport(report);
+        spinner.succeed(chalk.green('Competitor comparison complete'));
+      } else {
+        spinner.start(chalk.cyan('Starting audit...'));
+        const result = await runCoreAudit(auditOptions);
+        report = result.report;
+        html = result.html;
+        spinner.succeed(chalk.green(`Analysis complete — ${report.categories.length} categories evaluated`));
+      }
+
+      // Save HTML report
+      const outputDir = options.output || './reports';
+      const reportPath = saveReport(html, report.finalUrl, outputDir);
+      console.log(chalk.green(`  Report saved to ${reportPath}`));
+
+      // PDF export
+      if (options.format === 'pdf') {
+        const pdfSpinner = ora({ text: chalk.cyan('Generating PDF...'), color: 'cyan' }).start();
+        try {
+          const { generatePdf } = await import('../utils/pdf.js');
+          const pdfPath = reportPath.replace('.html', '.pdf');
+          await generatePdf({ html, outputPath: pdfPath, report });
+          pdfSpinner.succeed(chalk.green(`PDF saved to ${pdfPath}`));
+        } catch (err: any) {
+          pdfSpinner.fail(chalk.red(`PDF generation failed: ${err.message}`));
+        }
+      }
+
+      console.log('');
 
       if (options.json) {
         console.log(JSON.stringify(report, null, 2));
         return;
       }
 
-      // Display results interactively
       displayOverview(report);
-
-      // Ask what to explore
-      await interactiveExplore(report, options.output);
+      if (comparison) displayComparisonTable(comparison);
+      await interactiveExplore(report, outputDir);
 
     } catch (err: any) {
       console.log('');
@@ -79,316 +140,181 @@ program
     }
   });
 
-async function runAudit(
-  url: string,
-  options: { apiKey?: string; skipPerformance?: boolean; output?: string }
-): Promise<AuditReport> {
-  // Step 1: Crawl
-  const crawlSpinner = ora({
-    text: chalk.cyan('Crawling site...'),
-    color: 'cyan',
-  }).start();
-
-  const crawlResult = await crawlUrl(url, DEFAULT_CONFIG);
-
-  crawlSpinner.succeed(
-    chalk.green(`Crawled ${crawlResult.finalUrl} `) +
-    chalk.gray(`(${crawlResult.statusCode}, ${crawlResult.responseTime}ms)`)
-  );
-
-  // Step 2: Run analyzers
-  const analyzeSpinner = ora({
-    text: chalk.cyan('Running SEO analysis...'),
-    color: 'cyan',
-  }).start();
-
-  const results: AnalyzerResult[] = [];
-
-  // Technical analysis
-  analyzeSpinner.text = chalk.cyan('Analyzing technical SEO...');
-  results.push(analyzeTechnical(crawlResult));
-
-  // On-page analysis
-  analyzeSpinner.text = chalk.cyan('Analyzing on-page SEO...');
-  results.push(analyzeOnPage(crawlResult));
-
-  // Performance analysis
-  if (!options.skipPerformance) {
-    analyzeSpinner.text = chalk.cyan('Analyzing performance (this may take a moment)...');
-    try {
-      const perfResult = await analyzePerformance(crawlResult, options.apiKey);
-      results.push(perfResult);
-    } catch {
-      analyzeSpinner.warn(chalk.yellow('Performance analysis failed - continuing without it'));
-    }
-  }
-
-  // Schema analysis
-  analyzeSpinner.text = chalk.cyan('Analyzing structured data...');
-  results.push(analyzeSchema(crawlResult));
-
-  // AEO analysis
-  analyzeSpinner.text = chalk.cyan('Analyzing AEO / AI readiness...');
-  results.push(analyzeAEO(crawlResult));
-
-  analyzeSpinner.succeed(chalk.green(`Analysis complete — ${results.length} categories evaluated`));
-
-  // Step 3: Generate task plan
-  const taskSpinner = ora({
-    text: chalk.cyan('Generating task plan...'),
-    color: 'cyan',
-  }).start();
-
-  const taskPlan = generateTaskPlan(crawlResult.finalUrl, results);
-
-  taskSpinner.succeed(
-    chalk.green(`Task plan generated — ${Object.values(taskPlan.monthlyTasks).flat().length} tasks across 6 months`)
-  );
-
-  // Step 4: Calculate overall score
-  const overallScore = calculateOverallScore(results);
-
-  // Build executive summary
-  const totalFindings = results.reduce((sum, r) => sum + r.findings.length, 0);
-  const criticals = results.reduce(
-    (sum, r) => sum + r.findings.filter(f => f.severity === 'critical').length, 0
-  );
-  const quickWins = results.reduce(
-    (sum, r) => sum + r.findings.filter(f => f.effort === 'low' && f.severity !== 'info').length, 0
-  );
-
-  let execSummary = `This SEO audit of ${crawlResult.finalUrl} identified ${totalFindings} findings across ${results.length} categories, resulting in an overall score of ${overallScore}/100 (${getGrade(overallScore)}).`;
-
-  if (criticals > 0) {
-    execSummary += ` There are ${criticals} critical issues that should be addressed immediately.`;
-  }
-
-  if (quickWins > 0) {
-    execSummary += ` ${quickWins} quick wins were identified that can be resolved with minimal effort.`;
-  }
-
-  execSummary += ` The generated task plan provides a structured 6-month roadmap, starting with the most impactful fixes and building toward comprehensive optimization.`;
-
-  const report: AuditReport = {
-    url,
-    finalUrl: crawlResult.finalUrl,
-    generatedAt: new Date().toISOString(),
-    overallScore,
-    categories: results,
-    taskPlan,
-    executiveSummary: execSummary,
-    crawlData: crawlResult,
-  };
-
-  // Step 5: Generate and save HTML report
-  const reportSpinner = ora({
-    text: chalk.cyan('Generating HTML report...'),
-    color: 'cyan',
-  }).start();
-
-  const html = generateReport(report);
-  const outputDir = options.output || './reports';
-  const reportPath = saveReport(html, crawlResult.finalUrl, outputDir);
-
-  reportSpinner.succeed(chalk.green(`Report saved to ${reportPath}`));
-
-  console.log('');
-
-  return report;
-}
-
 function displayOverview(report: AuditReport) {
   const scoreColor = getScoreColor(report.overallScore);
   const colorFn = scoreColor === 'green' ? chalk.green : scoreColor === 'yellow' ? chalk.yellow : chalk.red;
 
-  // Overall score display
   console.log(chalk.bold.white('  ┌─────────────────────────────────────┐'));
   console.log(chalk.bold.white('  │  ') + chalk.bold.white('OVERALL SCORE: ') + colorFn.bold(`${report.overallScore}/100 (${getGrade(report.overallScore)})`) + chalk.bold.white('       │'));
   console.log(chalk.bold.white('  └─────────────────────────────────────┘'));
   console.log('');
 
-  // Category scores table
   const table = new Table({
-    head: [
-      chalk.white.bold('Category'),
-      chalk.white.bold('Score'),
-      chalk.white.bold('Grade'),
-      chalk.white.bold('Findings'),
-      chalk.white.bold('Critical'),
-    ],
+    head: ['Category', 'Score', 'Grade', 'Findings', 'Critical'].map(h => chalk.white.bold(h)),
     colWidths: [30, 10, 10, 12, 12],
     style: { head: [], border: ['gray'] },
   });
 
   for (const cat of report.categories) {
-    const catScoreColor = getScoreColor(cat.score);
-    const catColorFn = catScoreColor === 'green' ? chalk.green : catScoreColor === 'yellow' ? chalk.yellow : chalk.red;
-    const criticalCount = cat.findings.filter(f => f.severity === 'critical').length;
-
-    table.push([
-      cat.categoryLabel,
-      catColorFn.bold(`${cat.score}`),
-      catColorFn(getGrade(cat.score)),
-      `${cat.findings.length}`,
-      criticalCount > 0 ? chalk.red.bold(`${criticalCount}`) : chalk.gray('0'),
-    ]);
+    const c = getScoreColor(cat.score);
+    const fn = c === 'green' ? chalk.green : c === 'yellow' ? chalk.yellow : chalk.red;
+    const crits = cat.findings.filter(f => f.severity === 'critical').length;
+    table.push([cat.categoryLabel, fn.bold(`${cat.score}`), fn(getGrade(cat.score)), `${cat.findings.length}`, crits > 0 ? chalk.red.bold(`${crits}`) : chalk.gray('0')]);
   }
 
   console.log(table.toString());
   console.log('');
 
-  // Quick summary of most critical findings
-  const criticalFindings = report.categories
-    .flatMap(c => c.findings)
-    .filter(f => f.severity === 'critical');
-
-  if (criticalFindings.length > 0) {
-    console.log(chalk.red.bold('  ⚠ Critical Issues:'));
-    for (const finding of criticalFindings) {
-      console.log(chalk.red(`    • ${finding.title}`));
-    }
+  const criticals = report.categories.flatMap(c => c.findings).filter(f => f.severity === 'critical');
+  if (criticals.length > 0) {
+    console.log(chalk.red.bold('  Critical Issues:'));
+    criticals.forEach(f => console.log(chalk.red(`    - ${f.title}`)));
     console.log('');
   }
 
-  // Quick wins
-  const quickWins = report.categories
-    .flatMap(c => c.findings)
-    .filter(f => f.effort === 'low' && (f.severity === 'high' || f.severity === 'medium'))
-    .slice(0, 5);
-
+  const quickWins = report.categories.flatMap(c => c.findings)
+    .filter(f => f.effort === 'low' && (f.severity === 'high' || f.severity === 'medium')).slice(0, 5);
   if (quickWins.length > 0) {
-    console.log(chalk.green.bold('  ✓ Top Quick Wins:'));
-    for (const finding of quickWins) {
-      console.log(chalk.green(`    • ${finding.title}`) + chalk.gray(` (${finding.severity})`));
+    console.log(chalk.green.bold('  Top Quick Wins:'));
+    quickWins.forEach(f => console.log(chalk.green(`    - ${f.title}`) + chalk.gray(` (${f.severity})`)));
+    console.log('');
+  }
+
+  if (report.gscData) {
+    const gsc = report.gscData.searchAnalytics;
+    console.log(chalk.cyan.bold('  Search Console (Last 90 Days):'));
+    console.log(chalk.white(`    Clicks: ${gsc.totalClicks.toLocaleString()}  |  Impressions: ${gsc.totalImpressions.toLocaleString()}  |  CTR: ${gsc.averageCtr}%  |  Avg Position: ${gsc.averagePosition}`));
+    console.log('');
+  }
+
+  if (report.backlinkData) {
+    const bl = report.backlinkData;
+    console.log(chalk.cyan.bold('  Backlink Profile (DataforSEO):'));
+    console.log(chalk.white(`    Backlinks: ${bl.totalBacklinks.toLocaleString()}  |  Referring Domains: ${bl.referringDomains.toLocaleString()}  |  Domain Rank: ${bl.domainRank}  |  Broken: ${bl.brokenBacklinks.toLocaleString()}`));
+    console.log('');
+  }
+
+  if (report.keywordData && report.keywordData.length > 0) {
+    console.log(chalk.cyan.bold('  Keyword Intelligence (Keywords Everywhere):'));
+    console.log(chalk.white(`    ${report.keywordData.length} keywords tracked`));
+    const topKw = report.keywordData.filter(k => k.vol > 0).sort((a, b) => b.vol - a.vol).slice(0, 3);
+    if (topKw.length > 0) {
+      topKw.forEach(k => console.log(chalk.white(`    "${k.keyword}" — ${k.vol.toLocaleString()} mo. searches, $${k.cpc.toFixed(2)} CPC`)));
     }
+    console.log('');
+  }
+}
+
+function displayComparisonTable(comparison: CompetitorComparison) {
+  console.log(chalk.bold.white('  COMPETITOR COMPARISON'));
+  console.log('');
+
+  const compNames = comparison.competitors.map(c => {
+    try { return new URL(c.url).hostname.slice(0, 18); } catch { return c.url.slice(0, 18); }
+  });
+
+  const table = new Table({
+    head: ['Category', 'You', ...compNames, 'Rank'].map(h => chalk.white.bold(h)),
+    style: { head: [], border: ['gray'] },
+  });
+
+  for (const cat of comparison.categoryComparison) {
+    const cFn = getScoreColor(cat.clientScore) === 'green' ? chalk.green : getScoreColor(cat.clientScore) === 'yellow' ? chalk.yellow : chalk.red;
+    const compCells = cat.competitorScores.map(cs => {
+      const fn = getScoreColor(cs.score) === 'green' ? chalk.green : getScoreColor(cs.score) === 'yellow' ? chalk.yellow : chalk.red;
+      return fn(`${cs.score}`);
+    });
+    const rFn = cat.clientRank === 1 ? chalk.green.bold : cat.clientRank <= 2 ? chalk.yellow : chalk.red;
+    table.push([cat.categoryLabel, cFn.bold(`${cat.clientScore}`), ...compCells, rFn(`#${cat.clientRank}`)]);
+  }
+
+  table.push([chalk.bold('OVERALL'), chalk.bold(`${comparison.clientReport.overallScore}`), ...comparison.competitors.map(c => chalk.bold(`${c.report.overallScore}`)), '']);
+  console.log(table.toString());
+  console.log('');
+
+  if (comparison.gaps.length > 0) {
+    console.log(chalk.red.bold('  Key Gaps:'));
+    comparison.gaps.slice(0, 5).forEach(g => console.log(chalk.red(`    - ${g.finding} (${g.scoreDifference}pt gap)`)));
+    console.log('');
+  }
+  if (comparison.strengths.length > 0) {
+    console.log(chalk.green.bold('  Your Advantages:'));
+    comparison.strengths.slice(0, 5).forEach(s => console.log(chalk.green(`    - ${s.finding}`)));
     console.log('');
   }
 }
 
 async function interactiveExplore(report: AuditReport, outputDir: string) {
   let exploring = true;
-
   while (exploring) {
-    const { action } = await inquirer.prompt([{
-      type: 'list',
-      name: 'action',
-      message: 'What would you like to explore?',
-      choices: [
-        { name: 'View findings by category', value: 'category' },
-        { name: 'View task plan (month by month)', value: 'tasks' },
-        { name: 'View all critical issues', value: 'critical' },
-        { name: 'View quick wins', value: 'quick-wins' },
-        { name: 'Walk me through the starting point', value: 'walkthrough' },
-        new inquirer.Separator(),
-        { name: 'Exit', value: 'exit' },
-      ],
-    }]);
+    const choices: any[] = [
+      { name: 'View findings by category', value: 'category' },
+      { name: 'View task plan (month by month)', value: 'tasks' },
+      { name: 'View all critical issues', value: 'critical' },
+      { name: 'View quick wins', value: 'quick-wins' },
+      { name: 'Walk me through the starting point', value: 'walkthrough' },
+    ];
+    if (report.gscData) {
+      choices.push({ name: 'View top search queries', value: 'gsc-queries' });
+      choices.push({ name: 'View top pages by traffic', value: 'gsc-pages' });
+    }
+    if (report.backlinkData) choices.push({ name: 'View backlink profile', value: 'backlinks' });
+    if (report.keywordData && report.keywordData.length > 0) choices.push({ name: 'View keyword data', value: 'keywords' });
+    if (report.comparison) choices.push({ name: 'View competitor comparison', value: 'comparison' });
+    choices.push(new inquirer.Separator(), { name: 'Exit', value: 'exit' });
+
+    const { action } = await inquirer.prompt([{ type: 'list', name: 'action', message: 'What would you like to explore?', choices }]);
 
     switch (action) {
-      case 'category':
-        await exploreCategoryFindings(report);
-        break;
-      case 'tasks':
-        displayTaskPlan(report);
-        break;
-      case 'critical':
-        displayCriticalIssues(report);
-        break;
-      case 'quick-wins':
-        displayQuickWins(report);
-        break;
-      case 'walkthrough':
-        await walkthroughStartingPoint(report);
-        break;
-      case 'exit':
-        exploring = false;
-        console.log('');
-        console.log(chalk.gray('  Report saved. Open the HTML file in a browser for the full detailed report.'));
-        console.log('');
-        break;
+      case 'category': await exploreCategoryFindings(report); break;
+      case 'tasks': displayTaskPlan(report); break;
+      case 'critical': displayCriticalIssues(report); break;
+      case 'quick-wins': displayQuickWins(report); break;
+      case 'walkthrough': await walkthroughStartingPoint(report); break;
+      case 'gsc-queries': displayGSCQueries(report); break;
+      case 'gsc-pages': displayGSCPages(report); break;
+      case 'backlinks': displayBacklinks(report); break;
+      case 'keywords': displayKeywords(report); break;
+      case 'comparison': if (report.comparison) displayComparisonTable(report.comparison); break;
+      case 'exit': exploring = false; console.log(chalk.gray('\n  Report saved. Open the HTML file in a browser for the full report.\n')); break;
     }
   }
 }
 
 async function exploreCategoryFindings(report: AuditReport) {
   const { category } = await inquirer.prompt([{
-    type: 'list',
-    name: 'category',
-    message: 'Which category?',
-    choices: report.categories.map(cat => ({
-      name: `${cat.categoryLabel} (${cat.score}/100, ${cat.findings.length} findings)`,
-      value: cat.category,
-    })),
+    type: 'list', name: 'category', message: 'Which category?',
+    choices: report.categories.map(cat => ({ name: `${cat.categoryLabel} (${cat.score}/100, ${cat.findings.length} findings)`, value: cat.category })),
   }]);
-
   const cat = report.categories.find(c => c.category === category);
   if (!cat) return;
-
-  console.log('');
-  console.log(chalk.bold(`  ${cat.categoryLabel} — Score: ${cat.score}/100`));
-  console.log(chalk.gray(`  ${cat.summary}`));
-  console.log('');
-
-  if (cat.findings.length === 0) {
-    console.log(chalk.green('  No issues found in this category.'));
-    console.log('');
-    return;
-  }
-
-  for (const finding of cat.findings) {
-    const sevColor = finding.severity === 'critical' ? chalk.red :
-      finding.severity === 'high' ? chalk.hex('#ea580c') :
-      finding.severity === 'medium' ? chalk.yellow :
-      finding.severity === 'low' ? chalk.blue :
-      chalk.gray;
-
-    console.log(`  ${sevColor(`[${finding.severity.toUpperCase()}]`)} ${chalk.bold(finding.title)}`);
-    console.log(chalk.gray(`  ${finding.description}`));
-
-    if (finding.currentValue) {
-      console.log(chalk.red(`  Current: ${finding.currentValue}`));
-    }
-    if (finding.recommendedValue) {
-      console.log(chalk.green(`  Target:  ${finding.recommendedValue}`));
-    }
+  console.log(`\n  ${chalk.bold(cat.categoryLabel)} — Score: ${cat.score}/100\n  ${chalk.gray(cat.summary)}\n`);
+  if (cat.findings.length === 0) { console.log(chalk.green('  No issues found.\n')); return; }
+  for (const f of cat.findings) {
+    const sevColor = f.severity === 'critical' ? chalk.red : f.severity === 'high' ? chalk.hex('#ea580c') : f.severity === 'medium' ? chalk.yellow : f.severity === 'low' ? chalk.blue : chalk.gray;
+    console.log(`  ${sevColor(`[${f.severity.toUpperCase()}]`)} ${chalk.bold(f.title)}\n  ${chalk.gray(f.description)}`);
+    if (f.currentValue) console.log(chalk.red(`  Current: ${f.currentValue}`));
+    if (f.recommendedValue) console.log(chalk.green(`  Target:  ${f.recommendedValue}`));
     console.log('');
   }
 }
 
 function displayTaskPlan(report: AuditReport) {
-  const { taskPlan } = report;
-
   const phases: { key: TaskPhase; label: string }[] = [
-    { key: 'starting-point', label: 'Month 1: Starting Point' },
-    { key: 'month-2', label: 'Month 2: Performance & Technical' },
-    { key: 'month-3', label: 'Month 3: On-Page Optimization' },
-    { key: 'month-4', label: 'Month 4: Structured Data' },
-    { key: 'month-5', label: 'Month 5: AEO & AI Readiness' },
-    { key: 'month-6', label: 'Month 6: Ongoing & Monitoring' },
+    { key: 'starting-point', label: 'Month 1: Starting Point' }, { key: 'month-2', label: 'Month 2: Performance & Technical' },
+    { key: 'month-3', label: 'Month 3: On-Page Optimization' }, { key: 'month-4', label: 'Month 4: Structured Data' },
+    { key: 'month-5', label: 'Month 5: AEO & AI Readiness' }, { key: 'month-6', label: 'Month 6: Ongoing & Monitoring' },
   ];
-
-  console.log('');
-  console.log(chalk.bold.white('  SEO Task Plan — 6-Month Roadmap'));
-  console.log(chalk.gray(`  Total estimated effort: ~${taskPlan.totalEstimatedHours} hours`));
-  console.log('');
-
+  console.log(`\n  ${chalk.bold.white('SEO Task Plan — 6-Month Roadmap')}\n  ${chalk.gray(`Total: ~${report.taskPlan.totalEstimatedHours}h`)}\n`);
   for (const phase of phases) {
-    const tasks = taskPlan.monthlyTasks[phase.key] || [];
+    const tasks = report.taskPlan.monthlyTasks[phase.key] || [];
     if (tasks.length === 0) continue;
-
-    const totalHours = tasks.reduce((sum, t) => sum + t.estimatedHours, 0);
-
-    console.log(chalk.bold.cyan(`  ━━ ${phase.label} ━━`) + chalk.gray(` (${tasks.length} tasks, ~${totalHours}h)`));
-    console.log('');
-
-    for (const task of tasks) {
-      const priorityLabel = task.priority > 70 ? chalk.red('P1') :
-        task.priority > 40 ? chalk.yellow('P2') : chalk.blue('P3');
-      const effortLabel = task.effort === 'low' ? chalk.green(task.effort) :
-        task.effort === 'medium' ? chalk.yellow(task.effort) : chalk.red(task.effort);
-
-      console.log(`  ${priorityLabel} ${chalk.bold(task.title)} ${chalk.gray(`(${effortLabel} effort, ~${task.estimatedHours}h)`)}`);
-      console.log(chalk.gray(`     ${task.deliverable}`));
+    const hrs = tasks.reduce((s, t) => s + t.estimatedHours, 0);
+    console.log(chalk.bold.cyan(`  -- ${phase.label} --`) + chalk.gray(` (${tasks.length} tasks, ~${hrs}h)\n`));
+    for (const t of tasks) {
+      const p = t.priority > 70 ? chalk.red('P1') : t.priority > 40 ? chalk.yellow('P2') : chalk.blue('P3');
+      const e = t.effort === 'low' ? chalk.green(t.effort) : t.effort === 'medium' ? chalk.yellow(t.effort) : chalk.red(t.effort);
+      console.log(`  ${p} ${chalk.bold(t.title)} ${chalk.gray(`(${e}, ~${t.estimatedHours}h)`)}\n     ${chalk.gray(t.deliverable)}`);
     }
     console.log('');
   }
@@ -396,112 +322,99 @@ function displayTaskPlan(report: AuditReport) {
 
 function displayCriticalIssues(report: AuditReport) {
   const criticals = report.categories.flatMap(c => c.findings).filter(f => f.severity === 'critical');
-
   console.log('');
-  if (criticals.length === 0) {
-    console.log(chalk.green.bold('  No critical issues found.'));
-    console.log('');
-    return;
-  }
-
-  console.log(chalk.red.bold(`  ${criticals.length} Critical Issues`));
-  console.log('');
-
-  for (const finding of criticals) {
-    console.log(chalk.red.bold(`  ▸ ${finding.title}`));
-    console.log(chalk.white(`    ${finding.description}`));
-    console.log('');
-    console.log(chalk.yellow('    How to fix:'));
-    console.log(chalk.gray(`    ${finding.howToFix.replace(/\n/g, '\n    ')}`));
-    console.log('');
-    console.log(chalk.cyan('    Impact:'));
-    console.log(chalk.gray(`    ${finding.impact}`));
-    console.log('');
-    console.log(chalk.gray('    ─────────────────────────────────'));
-    console.log('');
+  if (criticals.length === 0) { console.log(chalk.green.bold('  No critical issues.\n')); return; }
+  console.log(chalk.red.bold(`  ${criticals.length} Critical Issues\n`));
+  for (const f of criticals) {
+    console.log(`${chalk.red.bold(`  > ${f.title}`)}\n    ${f.description}\n\n    ${chalk.yellow('Fix:')} ${chalk.gray(f.howToFix.replace(/\n/g, '\n    '))}\n    ${chalk.cyan('Impact:')} ${chalk.gray(f.impact)}\n`);
   }
 }
 
 function displayQuickWins(report: AuditReport) {
-  const quickWins = report.categories
-    .flatMap(c => c.findings)
-    .filter(f => f.effort === 'low' && f.severity !== 'info')
-    .sort((a, b) => {
-      const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-      return (sevOrder[a.severity] || 4) - (sevOrder[b.severity] || 4);
-    });
-
+  const wins = report.categories.flatMap(c => c.findings).filter(f => f.effort === 'low' && f.severity !== 'info')
+    .sort((a, b) => { const o: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }; return (o[a.severity] || 4) - (o[b.severity] || 4); });
   console.log('');
-  if (quickWins.length === 0) {
-    console.log(chalk.gray('  No quick wins identified.'));
-    console.log('');
-    return;
+  if (wins.length === 0) { console.log(chalk.gray('  No quick wins.\n')); return; }
+  console.log(chalk.green.bold(`  ${wins.length} Quick Wins\n`));
+  for (const f of wins) {
+    const c = f.severity === 'critical' ? chalk.red : f.severity === 'high' ? chalk.hex('#ea580c') : f.severity === 'medium' ? chalk.yellow : chalk.blue;
+    console.log(`  ${c(`[${f.severity.toUpperCase()}]`)} ${chalk.bold(f.title)}\n    ${chalk.gray(f.howToFix.split('\n')[0])}\n`);
+  }
+}
+
+function displayGSCQueries(report: AuditReport) {
+  if (!report.gscData) return;
+  const qs = report.gscData.searchAnalytics.topQueries.slice(0, 20);
+  console.log(`\n  ${chalk.bold.white('Top Search Queries (Last 90 Days)')}\n`);
+  const t = new Table({ head: ['Query', 'Clicks', 'Impressions', 'CTR', 'Pos'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
+  for (const q of qs) t.push([q.query.slice(0, 40), q.clicks.toLocaleString(), q.impressions.toLocaleString(), `${q.ctr}%`, `${q.position}`]);
+  console.log(t.toString() + '\n');
+}
+
+function displayGSCPages(report: AuditReport) {
+  if (!report.gscData) return;
+  const ps = report.gscData.searchAnalytics.topPages.slice(0, 15);
+  console.log(`\n  ${chalk.bold.white('Top Pages by Search Traffic')}\n`);
+  const t = new Table({ head: ['Page', 'Clicks', 'Impressions', 'CTR', 'Pos'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
+  for (const p of ps) t.push([p.page.replace(/https?:\/\/[^/]+/, '').slice(0, 45) || '/', p.clicks.toLocaleString(), p.impressions.toLocaleString(), `${p.ctr}%`, `${p.position}`]);
+  console.log(t.toString() + '\n');
+}
+
+function displayBacklinks(report: AuditReport) {
+  if (!report.backlinkData) return;
+  const bl = report.backlinkData;
+  console.log(`\n  ${chalk.bold.white('Backlink Profile')}\n`);
+  console.log(chalk.white(`  Total Backlinks: ${bl.totalBacklinks.toLocaleString()}`));
+  console.log(chalk.white(`  Referring Domains: ${bl.referringDomains.toLocaleString()}`));
+  console.log(chalk.white(`  Domain Rank: ${bl.domainRank}/100`));
+  console.log(chalk.white(`  Broken Backlinks: ${bl.brokenBacklinks.toLocaleString()}`));
+
+  if (bl.topReferringDomains.length > 0) {
+    console.log(`\n  ${chalk.bold('Top Referring Domains:')}`);
+    const t = new Table({ head: ['Domain', 'Backlinks', 'Rank'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
+    bl.topReferringDomains.slice(0, 10).forEach(d => t.push([d.domain, d.backlinks.toLocaleString(), `${d.rank}`]));
+    console.log(t.toString());
   }
 
-  console.log(chalk.green.bold(`  ${quickWins.length} Quick Wins (Low Effort)`));
-  console.log('');
-
-  for (const finding of quickWins) {
-    const sevColor = finding.severity === 'critical' ? chalk.red :
-      finding.severity === 'high' ? chalk.hex('#ea580c') :
-      finding.severity === 'medium' ? chalk.yellow : chalk.blue;
-
-    console.log(`  ${sevColor(`[${finding.severity.toUpperCase()}]`)} ${chalk.bold(finding.title)}`);
-    console.log(chalk.gray(`    ${finding.howToFix.split('\n')[0]}`));
-    console.log('');
+  if (bl.topAnchors.length > 0) {
+    console.log(`\n  ${chalk.bold('Top Anchor Texts:')}`);
+    const t = new Table({ head: ['Anchor Text', 'Count'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
+    bl.topAnchors.slice(0, 10).forEach(a => t.push([a.anchor.slice(0, 50), a.count.toLocaleString()]));
+    console.log(t.toString());
   }
+  console.log('');
+}
+
+function displayKeywords(report: AuditReport) {
+  if (!report.keywordData || report.keywordData.length === 0) return;
+  const kws = report.keywordData.filter(k => k.vol > 0).sort((a, b) => b.vol - a.vol);
+  console.log(`\n  ${chalk.bold.white('Keyword Intelligence')}\n`);
+  console.log(chalk.white(`  ${report.keywordData.length} keywords tracked, ${kws.length} with search volume\n`));
+  const t = new Table({ head: ['Keyword', 'Volume', 'CPC', 'Competition'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
+  kws.slice(0, 25).forEach(k => {
+    const compLabel = k.competition > 0.7 ? chalk.red('High') : k.competition > 0.3 ? chalk.yellow('Med') : chalk.green('Low');
+    t.push([k.keyword.slice(0, 40), k.vol.toLocaleString(), `$${k.cpc.toFixed(2)}`, compLabel]);
+  });
+  console.log(t.toString() + '\n');
 }
 
 async function walkthroughStartingPoint(report: AuditReport) {
-  const startingTasks = report.taskPlan.startingPoint;
-
-  if (startingTasks.length === 0) {
-    console.log('');
-    console.log(chalk.green('  No starting point tasks — the site is in good shape!'));
-    console.log('');
-    return;
-  }
-
-  console.log('');
-  console.log(chalk.bold.white('  ━━ Month 1 Starting Point Walkthrough ━━'));
-  console.log(chalk.gray(`  ${startingTasks.length} tasks to complete first.`));
-  console.log('');
-
-  for (let i = 0; i < startingTasks.length; i++) {
-    const task = startingTasks[i];
-
-    console.log(chalk.bold.cyan(`  Task ${i + 1}/${startingTasks.length}: ${task.title}`));
-    console.log(chalk.white(`  ${task.description}`));
-    console.log('');
-    console.log(chalk.yellow('  Deliverable: ') + chalk.white(task.deliverable));
-    console.log(chalk.yellow('  Effort: ') + chalk.white(`${task.effort} (~${task.estimatedHours} hours)`));
-    console.log('');
-
+  const tasks = report.taskPlan.startingPoint;
+  if (tasks.length === 0) { console.log(chalk.green('\n  No starting point tasks — the site is in good shape!\n')); return; }
+  console.log(`\n  ${chalk.bold.white('Month 1 Starting Point Walkthrough')}\n  ${chalk.gray(`${tasks.length} tasks`)}\n`);
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i];
+    console.log(`  ${chalk.bold.cyan(`Task ${i + 1}/${tasks.length}: ${t.title}`)}\n  ${t.description}\n\n  ${chalk.yellow('Deliverable:')} ${t.deliverable}\n  ${chalk.yellow('Effort:')} ${t.effort} (~${t.estimatedHours}h)\n`);
     console.log(chalk.bold('  Steps:'));
-    for (let j = 0; j < task.steps.length; j++) {
-      console.log(chalk.white(`    ${j + 1}. ${task.steps[j]}`));
-    }
+    t.steps.forEach((s, j) => console.log(`    ${j + 1}. ${s}`));
     console.log('');
-
-    if (i < startingTasks.length - 1) {
-      const { next } = await inquirer.prompt([{
-        type: 'list',
-        name: 'next',
-        message: 'Continue?',
-        choices: [
-          { name: 'Next task →', value: 'next' },
-          { name: 'Back to menu', value: 'menu' },
-        ],
-      }]);
-
+    if (i < tasks.length - 1) {
+      const { next } = await inquirer.prompt([{ type: 'list', name: 'next', message: 'Continue?', choices: [{ name: 'Next task', value: 'next' }, { name: 'Back to menu', value: 'menu' }] }]);
       if (next === 'menu') break;
     } else {
-      console.log(chalk.green.bold('  ✓ That\'s the complete Month 1 starting point!'));
-      console.log(chalk.gray('  Complete these tasks first, then move to Month 2.'));
-      console.log('');
+      console.log(chalk.green.bold('  Month 1 complete! Move to Month 2 next.\n'));
     }
   }
 }
 
-// Parse and run
 program.parse();

@@ -44,11 +44,14 @@ export function calculateCategoryScore(findings: Finding[]): number {
  */
 export function calculateOverallScore(results: AnalyzerResult[]): number {
   const CATEGORY_WEIGHTS: Record<string, number> = {
-    technical: 0.25,
-    onpage: 0.25,
-    performance: 0.25,
-    schema: 0.15,
-    aeo: 0.10,
+    technical: 0.18,
+    onpage: 0.18,
+    performance: 0.16,
+    schema: 0.08,
+    aeo: 0.06,
+    'search-console': 0.14,
+    backlinks: 0.12,
+    keywords: 0.08,
   };
 
   let weightedSum = 0;

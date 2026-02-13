@@ -355,4 +355,153 @@ export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
       'Verify using browser DevTools or HTML validator',
     ],
   },
+
+  // ============================================================
+  // Search Console Tasks
+  // ============================================================
+
+  'gsc-low-impressions': {
+    title: 'Increase Search Visibility & Impressions',
+    description: 'The site has very few impressions in Google Search, indicating limited presence in search results. This is the most fundamental SEO metric to address.',
+    estimatedHours: 8,
+    deliverable: 'Content strategy document + 5 new keyword-targeted pages published',
+    steps: [
+      'Verify the site is properly indexed — check for noindex tags, robots.txt blocks, and crawl errors in GSC',
+      'Ensure the XML sitemap is submitted and processing without errors',
+      'Research target keywords using Keywords Everywhere or DataforSEO to find queries with search volume',
+      'Create a content plan targeting 5-10 keywords with moderate volume and low-medium competition',
+      'Write and publish optimized content for each target keyword',
+      'Build internal links from existing pages to new content',
+      'Submit new URLs for indexing via Google Search Console',
+      'Monitor impressions weekly — expect growth within 4-8 weeks',
+    ],
+  },
+
+  'gsc-low-overall-ctr': {
+    title: 'Improve Site-Wide Click-Through Rate',
+    description: 'The average CTR across all queries is below industry benchmarks. People see the site in results but are not clicking.',
+    estimatedHours: 4,
+    deliverable: 'Rewritten title tags and meta descriptions for top 20 pages',
+    steps: [
+      'Export the top 20 pages by impressions from Google Search Console',
+      'For each page, review the current title tag and meta description',
+      'Rewrite titles to be more compelling: front-load keywords, add power words, keep under 60 chars',
+      'Rewrite meta descriptions with clear value propositions and calls-to-action, keep under 160 chars',
+      'Implement structured data (FAQ, review, how-to) to enable rich results that increase visual appeal',
+      'Deploy changes and monitor CTR changes in GSC over the next 2-4 weeks',
+    ],
+  },
+
+  'gsc-low-avg-position': {
+    title: 'Improve Average Search Position',
+    description: 'Most queries rank on page 2+ of Google. Focus on moving "striking distance" keywords to page 1.',
+    estimatedHours: 10,
+    deliverable: 'Optimization plan for top 20 striking-distance pages with implementation',
+    steps: [
+      'Export queries ranking in positions 8-20 from Google Search Console',
+      'Prioritize queries with the highest impressions (most traffic potential)',
+      'For each priority query, identify the ranking page and analyze content gaps',
+      'Improve content depth and quality — ensure the page fully satisfies the search intent',
+      'Add internal links from high-authority pages to the target pages',
+      'Optimize on-page elements: title tag, H1, H2s, image alt text for the target keyword',
+      'Identify link-building opportunities to strengthen these pages',
+      'Re-test positions in 4-6 weeks',
+    ],
+  },
+
+  'gsc-low-ctr-pages': {
+    title: 'Optimize High-Impression, Low-CTR Pages',
+    description: 'Several pages get many impressions but very few clicks. These represent the highest-ROI optimization opportunities — increase traffic without needing better rankings.',
+    estimatedHours: 3,
+    deliverable: 'Rewritten title tags and meta descriptions for low-CTR pages',
+    steps: [
+      'Review the flagged pages in the audit report',
+      'For each page, search the target keyword on Google and review how your result looks vs competitors',
+      'Rewrite the title tag to be more compelling and differentiated from competitors',
+      'Write a meta description that sells the click — include unique value, numbers, calls-to-action',
+      'Consider adding structured data for rich results (FAQ, review stars, etc.)',
+      'Deploy changes and track CTR in Google Search Console over 2-4 weeks',
+    ],
+  },
+
+  'gsc-opportunity-queries': {
+    title: 'Create Content for Opportunity Keywords',
+    description: 'Multiple high-impression queries are not generating clicks. These represent proven demand that your site is not capitalizing on.',
+    estimatedHours: 8,
+    deliverable: 'New or optimized content targeting opportunity keywords',
+    steps: [
+      'Review the opportunity keywords identified in the audit report',
+      'Group similar keywords by topic/intent',
+      'For each keyword group, determine if an existing page should be optimized or if new content is needed',
+      'For existing pages: expand content to better address the keyword, add relevant sections and headings',
+      'For new content: create comprehensive pages targeting the keyword cluster',
+      'Use the target keyword in the title, H1, and naturally throughout the content',
+      'Build internal links to and from the new/updated content',
+      'Submit URLs for re-indexing in Google Search Console',
+    ],
+  },
+
+  'gsc-striking-distance': {
+    title: 'Push Striking-Distance Keywords to Page 1',
+    description: 'Keywords ranking in positions 4-15 are close to generating significantly more traffic. Small improvements can have outsized results.',
+    estimatedHours: 6,
+    deliverable: 'Optimization implemented for striking-distance keywords',
+    steps: [
+      'Review the striking-distance keywords from the audit report',
+      'For each keyword, identify the ranking page in Google Search Console',
+      'Analyze the top 3 results for each keyword — what do they have that your page doesn\'t?',
+      'Update content: add missing sections, improve depth, add supporting data/examples',
+      'Improve on-page signals: ensure keyword is in title, H1, first paragraph, and URL if possible',
+      'Add 3-5 internal links from relevant pages pointing to the target page',
+      'Consider creating supporting content that links to and strengthens the target page',
+      'Monitor position changes weekly in GSC',
+    ],
+  },
+
+  'gsc-low-page1-ratio': {
+    title: 'Increase Page 1 Ranking Coverage',
+    description: 'Less than 20% of tracked queries rank on Google page 1. A comprehensive SEO improvement strategy is needed.',
+    estimatedHours: 12,
+    deliverable: 'Comprehensive SEO improvement strategy with execution plan',
+    steps: [
+      'Audit existing content quality across the site — identify thin, outdated, or low-quality pages',
+      'Research competitor content to identify gaps in your coverage',
+      'Build a topical authority strategy: create content clusters around core topics',
+      'Prioritize content improvements starting with pages closest to page 1',
+      'Implement technical SEO fixes to ensure clean crawling and indexing',
+      'Develop a link-building strategy to improve domain authority',
+      'Set monthly ranking targets and track progress in GSC',
+    ],
+  },
+
+  'gsc-no-sitemap-submitted': {
+    title: 'Submit XML Sitemap to Google Search Console',
+    description: 'No sitemap is registered with Google Search Console. This is a quick fix that helps Google discover and index your pages.',
+    estimatedHours: 0.5,
+    deliverable: 'XML sitemap submitted and verified in Google Search Console',
+    steps: [
+      'Verify your XML sitemap exists at /sitemap.xml',
+      'If no sitemap exists: generate one including all important, indexable pages',
+      'Log into Google Search Console',
+      'Navigate to Sitemaps section',
+      'Enter your sitemap URL and click Submit',
+      'Wait for Google to process it and verify it shows "Success"',
+      'Check for any errors reported in the sitemap status',
+    ],
+  },
+
+  'gsc-sitemap-stale': {
+    title: 'Fix Stale Sitemap in Search Console',
+    description: 'The sitemap hasn\'t been re-downloaded by Google recently, which may indicate it is not being updated properly.',
+    estimatedHours: 1,
+    deliverable: 'Updated sitemap re-submitted and processing in GSC',
+    steps: [
+      'Check if your sitemap is being regenerated when content changes',
+      'Ensure the sitemap includes lastmod dates that update with content changes',
+      'If using a CMS: verify the sitemap plugin is configured correctly',
+      'Re-submit the sitemap in Google Search Console',
+      'Check the GSC sitemaps report for any errors',
+      'Verify Google re-downloads the sitemap within 1-2 weeks',
+    ],
+  },
 };

@@ -9,7 +9,7 @@ export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Effort = 'low' | 'medium' | 'high';
 
 /** SEO audit categories */
-export type AuditCategory = 'technical' | 'onpage' | 'performance' | 'schema' | 'aeo';
+export type AuditCategory = 'technical' | 'onpage' | 'performance' | 'schema' | 'aeo' | 'search-console' | 'keywords' | 'backlinks';
 
 /** Task assignment phase */
 export type TaskPhase = 'starting-point' | 'month-2' | 'month-3' | 'month-4' | 'month-5' | 'month-6';
@@ -125,6 +125,165 @@ export interface PerformanceData {
 }
 
 // ============================================================
+// Google Search Console Types
+// ============================================================
+
+export interface GSCConfig {
+  keyFilePath: string;
+  siteUrl: string;
+  dateRange?: {
+    startDate: string; // YYYY-MM-DD
+    endDate: string;
+  };
+}
+
+export interface GSCData {
+  searchAnalytics: GSCSearchAnalytics;
+  sitemapStatus: GSCSitemapStatus[];
+}
+
+export interface GSCSearchAnalytics {
+  totalClicks: number;
+  totalImpressions: number;
+  averageCtr: number;
+  averagePosition: number;
+  topQueries: GSCQueryRow[];
+  topPages: GSCPageRow[];
+  queryCount: number;
+  pageCount: number;
+}
+
+export interface GSCQueryRow {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface GSCPageRow {
+  page: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface GSCSitemapStatus {
+  path: string;
+  lastSubmitted: string;
+  lastDownloaded: string;
+  isPending: boolean;
+  urlsDiscovered: number;
+}
+
+// ============================================================
+// Competitor Comparison Types
+// ============================================================
+
+export interface CompetitorComparison {
+  clientUrl: string;
+  clientReport: AuditReport;
+  competitors: CompetitorEntry[];
+  categoryComparison: CategoryComparison[];
+  gaps: CompetitorGap[];
+  strengths: CompetitorStrength[];
+  generatedAt: string;
+}
+
+export interface CompetitorEntry {
+  url: string;
+  report: AuditReport;
+}
+
+export interface CategoryComparison {
+  category: AuditCategory;
+  categoryLabel: string;
+  clientScore: number;
+  competitorScores: { url: string; score: number }[];
+  averageCompetitorScore: number;
+  clientRank: number;
+}
+
+export interface CompetitorGap {
+  category: AuditCategory;
+  finding: string;
+  description: string;
+  competitorUrl: string;
+  competitorScore: number;
+  clientScore: number;
+  scoreDifference: number;
+}
+
+export interface CompetitorStrength {
+  category: AuditCategory;
+  finding: string;
+  description: string;
+  clientScore: number;
+  averageCompetitorScore: number;
+  advantage: number;
+}
+
+// ============================================================
+// DataforSEO Types
+// ============================================================
+
+export interface DataforSEOConfig {
+  login: string;
+  password: string;
+}
+
+export interface DataforSEOKeywordData {
+  keyword: string;
+  searchVolume: number;
+  cpc: number;
+  competition: number;
+  competitionLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  monthlySearches: { month: string; volume: number }[];
+}
+
+export interface DataforSEOBacklinkSummary {
+  totalBacklinks: number;
+  referringDomains: number;
+  brokenBacklinks: number;
+  domainRank: number;
+  topAnchors: { anchor: string; count: number }[];
+  topReferringDomains: { domain: string; backlinks: number; rank: number }[];
+}
+
+export interface DataforSEOSerpResult {
+  keyword: string;
+  position: number;
+  url: string;
+  title: string;
+  description: string;
+  featuredSnippet: boolean;
+  peopleAlsoAsk: string[];
+}
+
+// ============================================================
+// Keywords Everywhere Types
+// ============================================================
+
+export interface KeywordsEverywhereConfig {
+  apiKey: string;
+}
+
+export interface KEKeywordData {
+  keyword: string;
+  vol: number;
+  cpc: number;
+  competition: number;
+  trend: number[];
+}
+
+export interface KEDomainTraffic {
+  domain: string;
+  estimatedTraffic: number;
+  topKeywords: KEKeywordData[];
+}
+
+// ============================================================
 // Task Types
 // ============================================================
 
@@ -165,6 +324,10 @@ export interface AuditReport {
   taskPlan: TaskPlan;
   executiveSummary: string;
   crawlData: CrawlResult;
+  gscData?: GSCData;
+  backlinkData?: DataforSEOBacklinkSummary;
+  keywordData?: KEKeywordData[];
+  comparison?: CompetitorComparison;
 }
 
 // ============================================================
@@ -173,7 +336,9 @@ export interface AuditReport {
 
 export interface ToolConfig {
   pageSpeedApiKey?: string;
-  searchConsoleCredentials?: string;
+  gscConfig?: GSCConfig;
+  dataforseoConfig?: DataforSEOConfig;
+  keywordsEverywhereConfig?: KeywordsEverywhereConfig;
   userAgent: string;
   timeout: number;
   maxRedirects: number;
