@@ -35,7 +35,6 @@ export async function POST(request: NextRequest) {
     'gscKeyFile',
     'dataforseoLogin',
     'dataforseoPassword',
-    'keApiKey',
   ];
 
   if (!allowedKeys.includes(key)) {

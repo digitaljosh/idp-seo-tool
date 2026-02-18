@@ -41,8 +41,7 @@ export async function POST(request: NextRequest) {
     dataforseoLogin: settings.dataforseoLogin,
     dataforseoPassword: settings.dataforseoPassword,
     skipBacklinks: skipBacklinks || !settings.dataforseoLogin,
-    keApiKey: settings.keApiKey,
-    skipKeywords: skipKeywords || !settings.keApiKey,
+    skipKeywords: skipKeywords || !settings.dataforseoLogin,
     onProgress: (step, detail) => {
       progressMap.set(auditId, { step, detail: detail || step, timestamp: Date.now() });
     },

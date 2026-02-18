@@ -368,7 +368,7 @@ export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
     steps: [
       'Verify the site is properly indexed — check for noindex tags, robots.txt blocks, and crawl errors in GSC',
       'Ensure the XML sitemap is submitted and processing without errors',
-      'Research target keywords using Keywords Everywhere or DataforSEO to find queries with search volume',
+      'Research target keywords using DataforSEO to find queries with search volume',
       'Create a content plan targeting 5-10 keywords with moderate volume and low-medium competition',
       'Write and publish optimized content for each target keyword',
       'Build internal links from existing pages to new content',

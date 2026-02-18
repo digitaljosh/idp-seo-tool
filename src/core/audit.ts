@@ -1,7 +1,7 @@
 import type {
   AuditReport, AnalyzerResult, ToolConfig, CrawlResult,
   GSCConfig, GSCData, DataforSEOConfig, DataforSEOBacklinkSummary,
-  KeywordsEverywhereConfig, KEKeywordData,
+  DataforSEOKeywordData,
 } from '../types.js';
 import { crawlUrl } from '../utils/crawler.js';
 import { analyzeTechnical } from '../analyzers/technical.js';
@@ -28,7 +28,6 @@ export interface AuditOptions {
   dataforseoLogin?: string;
   dataforseoPassword?: string;
   skipBacklinks?: boolean;
-  keApiKey?: string;
   skipKeywords?: boolean;
   seedKeywords?: string[];
   onProgress?: (step: string, detail?: string) => void;
@@ -118,15 +117,18 @@ export async function runCoreAudit(options: AuditOptions): Promise<AuditResult> 
     }
   }
 
-  // Step 2d: Keywords Everywhere (optional)
-  let keywordData: KEKeywordData[] | undefined;
-  if (!options.skipKeywords && options.keApiKey) {
-    progress('keywords', 'Analyzing keyword intelligence (Keywords Everywhere)...');
+  // Step 2d: Keyword Intelligence via DataforSEO (optional — uses same credentials as backlinks)
+  let keywordData: DataforSEOKeywordData[] | undefined;
+  if (!options.skipKeywords && options.dataforseoLogin && options.dataforseoPassword) {
+    progress('keywords', 'Analyzing keyword intelligence (DataforSEO)...');
     try {
-      const { analyzeKeywords } = await import('../analyzers/keywords-everywhere.js');
+      const { analyzeKeywordIntelligence } = await import('../analyzers/dataforseo.js');
       const domain = new URL(crawlResult.finalUrl).hostname;
-      const keConfig: KeywordsEverywhereConfig = { apiKey: options.keApiKey };
-      const kwResult = await analyzeKeywords(domain, keConfig, options.seedKeywords);
+      const dfsConfig: DataforSEOConfig = {
+        login: options.dataforseoLogin,
+        password: options.dataforseoPassword,
+      };
+      const kwResult = await analyzeKeywordIntelligence(domain, dfsConfig, options.seedKeywords);
       results.push(kwResult.result);
       keywordData = kwResult.data;
     } catch {

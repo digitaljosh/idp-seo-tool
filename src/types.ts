@@ -262,28 +262,6 @@ export interface DataforSEOSerpResult {
 }
 
 // ============================================================
-// Keywords Everywhere Types
-// ============================================================
-
-export interface KeywordsEverywhereConfig {
-  apiKey: string;
-}
-
-export interface KEKeywordData {
-  keyword: string;
-  vol: number;
-  cpc: number;
-  competition: number;
-  trend: number[];
-}
-
-export interface KEDomainTraffic {
-  domain: string;
-  estimatedTraffic: number;
-  topKeywords: KEKeywordData[];
-}
-
-// ============================================================
 // Task Types
 // ============================================================
 
@@ -326,7 +304,7 @@ export interface AuditReport {
   crawlData: CrawlResult;
   gscData?: GSCData;
   backlinkData?: DataforSEOBacklinkSummary;
-  keywordData?: KEKeywordData[];
+  keywordData?: DataforSEOKeywordData[];
   comparison?: CompetitorComparison;
 }
 
@@ -338,7 +316,6 @@ export interface ToolConfig {
   pageSpeedApiKey?: string;
   gscConfig?: GSCConfig;
   dataforseoConfig?: DataforSEOConfig;
-  keywordsEverywhereConfig?: KeywordsEverywhereConfig;
   userAgent: string;
   timeout: number;
   maxRedirects: number;

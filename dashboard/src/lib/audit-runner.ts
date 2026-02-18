@@ -15,7 +15,6 @@ export interface DashboardAuditOptions {
   dataforseoLogin?: string;
   dataforseoPassword?: string;
   skipBacklinks?: boolean;
-  keApiKey?: string;
   skipKeywords?: boolean;
   competitors?: string[];
   onProgress?: (step: string, detail?: string) => void;
@@ -54,7 +53,6 @@ export async function runDashboardAudit(
     dataforseoLogin: options.dataforseoLogin,
     dataforseoPassword: options.dataforseoPassword,
     skipBacklinks: options.skipBacklinks,
-    keApiKey: options.keApiKey,
     skipKeywords: options.skipKeywords,
     onProgress: options.onProgress,
   };

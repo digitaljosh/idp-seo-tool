@@ -13,8 +13,7 @@ export { analyzePerformance } from './analyzers/performance.js';
 export { analyzeSchema } from './analyzers/schema.js';
 export { analyzeAEO } from './analyzers/aeo.js';
 export { analyzeSearchConsole } from './analyzers/search-console.js';
-export { analyzeBacklinks, fetchKeywordVolumes } from './analyzers/dataforseo.js';
-export { analyzeKeywords } from './analyzers/keywords-everywhere.js';
+export { analyzeBacklinks, analyzeKeywordIntelligence, fetchKeywordVolumes } from './analyzers/dataforseo.js';
 
 // Reports & Tasks
 export { generateTaskPlan } from './tasks/generator.js';

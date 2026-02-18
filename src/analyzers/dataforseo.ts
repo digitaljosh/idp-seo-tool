@@ -3,6 +3,7 @@ import type {
   Finding,
   DataforSEOConfig,
   DataforSEOBacklinkSummary,
+  DataforSEOKeywordData,
 } from '../types.js';
 import { calculateCategoryScore, getScoreSummary } from '../utils/scoring.js';
 import axios from 'axios';
@@ -66,6 +67,67 @@ export async function analyzeBacklinks(
       summary: getScoreSummary('Backlink Profile', score),
     },
     data: backlinkData,
+  };
+}
+
+/**
+ * DataforSEO Keyword Intelligence Analyzer
+ *
+ * Uses DataforSEO's Keywords Data API to analyze:
+ * - Keywords the domain ranks for (via keywords_for_site)
+ * - Related keyword suggestions
+ * - Search volume, CPC, and competition data
+ *
+ * Replaces the previously separate Keywords Everywhere integration.
+ */
+export async function analyzeKeywordIntelligence(
+  domain: string,
+  config: DataforSEOConfig,
+  seedKeywords?: string[]
+): Promise<{ result: AnalyzerResult; data: DataforSEOKeywordData[] }> {
+  const auth = {
+    username: config.login,
+    password: config.password,
+  };
+
+  // Step 1: Get keywords the domain ranks for
+  const domainKeywords = await fetchDomainKeywords(domain, auth);
+
+  // Step 2: If seed keywords provided, get their volume data
+  let seedData: DataforSEOKeywordData[] = [];
+  if (seedKeywords && seedKeywords.length > 0) {
+    seedData = await fetchKeywordSearchVolumes(seedKeywords, auth);
+  }
+
+  // Step 3: Get related keywords based on top domain keywords
+  const topKeywords = domainKeywords.slice(0, 3).map(k => k.keyword);
+  let relatedKeywords: DataforSEOKeywordData[] = [];
+  if (topKeywords.length > 0) {
+    relatedKeywords = await fetchRelatedKeywords(topKeywords[0], auth);
+  }
+
+  // Combine and deduplicate all keyword data
+  const allKeywords = deduplicateKeywords([...domainKeywords, ...seedData, ...relatedKeywords]);
+
+  // Generate findings
+  const findings: Finding[] = [];
+
+  checkKeywordCoverage(domainKeywords, findings);
+  checkHighValueOpportunities(relatedKeywords, domainKeywords, findings);
+  checkCompetitionLevels(domainKeywords, findings);
+
+  const score = calculateCategoryScore(findings);
+
+  return {
+    result: {
+      category: 'keywords',
+      categoryLabel: 'Keyword Intelligence',
+      score,
+      maxScore: 100,
+      findings,
+      summary: getScoreSummary('Keyword Intelligence', score),
+    },
+    data: allKeywords,
   };
 }
 
@@ -304,4 +366,210 @@ function checkDomainAuthority(data: DataforSEOBacklinkSummary, findings: Finding
       effort: 'high',
     });
   }
+}
+
+// ============================================================
+// Keyword Intelligence — Data Fetching
+// ============================================================
+
+async function fetchDomainKeywords(
+  domain: string,
+  auth: { username: string; password: string }
+): Promise<DataforSEOKeywordData[]> {
+  try {
+    const response = await axios.post(
+      `${BASE_URL}/keywords_data/google_ads/keywords_for_site/live`,
+      [{ target: domain, language_code: 'en', location_code: 2840, sort_by: 'search_volume' }],
+      { auth, headers: { 'content-type': 'application/json' } }
+    );
+
+    const items = response.data?.tasks?.[0]?.result || [];
+    return items.slice(0, 100).map((item: any) => ({
+      keyword: item.keyword || '',
+      searchVolume: item.search_volume || 0,
+      cpc: item.cpc || 0,
+      competition: item.competition || 0,
+      competitionLevel: item.competition_level || 'LOW',
+      monthlySearches: (item.monthly_searches || []).map((m: any) => ({
+        month: `${m.year}-${String(m.month).padStart(2, '0')}`,
+        volume: m.search_volume || 0,
+      })),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRelatedKeywords(
+  keyword: string,
+  auth: { username: string; password: string }
+): Promise<DataforSEOKeywordData[]> {
+  try {
+    const response = await axios.post(
+      `${BASE_URL}/dataforseo_labs/google/related_keywords/live`,
+      [{ keyword, language_code: 'en', location_code: 2840, limit: 50 }],
+      { auth, headers: { 'content-type': 'application/json' } }
+    );
+
+    const items = response.data?.tasks?.[0]?.result?.[0]?.items || [];
+    return items.map((item: any) => {
+      const kd = item.keyword_data?.keyword_info || {};
+      return {
+        keyword: item.keyword_data?.keyword || '',
+        searchVolume: kd.search_volume || 0,
+        cpc: kd.cpc || 0,
+        competition: kd.competition || 0,
+        competitionLevel: kd.competition_level || 'LOW',
+        monthlySearches: (kd.monthly_searches || []).map((m: any) => ({
+          month: `${m.year}-${String(m.month).padStart(2, '0')}`,
+          volume: m.search_volume || 0,
+        })),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchKeywordSearchVolumes(
+  keywords: string[],
+  auth: { username: string; password: string }
+): Promise<DataforSEOKeywordData[]> {
+  try {
+    const response = await axios.post(
+      `${BASE_URL}/keywords_data/google_ads/search_volume/live`,
+      [{ keywords: keywords.slice(0, 100), location_code: 2840, language_code: 'en' }],
+      { auth, headers: { 'content-type': 'application/json' } }
+    );
+
+    const items = response.data?.tasks?.[0]?.result || [];
+    return items.map((item: any) => ({
+      keyword: item.keyword || '',
+      searchVolume: item.search_volume || 0,
+      cpc: item.cpc || 0,
+      competition: item.competition || 0,
+      competitionLevel: item.competition_level || 'LOW',
+      monthlySearches: (item.monthly_searches || []).map((m: any) => ({
+        month: `${m.year}-${String(m.month).padStart(2, '0')}`,
+        volume: m.search_volume || 0,
+      })),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================
+// Keyword Intelligence — Finding Generators
+// ============================================================
+
+function checkKeywordCoverage(domainKeywords: DataforSEOKeywordData[], findings: Finding[]) {
+  if (domainKeywords.length === 0) {
+    findings.push({
+      id: 'kw-no-keyword-data',
+      title: 'No Keyword Rankings Detected',
+      description: 'No keyword rankings found for this domain. The site may be too new or not yet indexed for target keywords.',
+      severity: 'high',
+      category: 'keywords',
+      subcategory: 'Coverage',
+      currentValue: '0 keyword rankings found',
+      recommendedValue: 'Target 50+ keywords with ranking positions',
+      howToFix: 'Create keyword-targeted content: research what your audience searches for, create comprehensive pages for each topic, and ensure proper on-page optimization (title tags, H1s, content structure).',
+      impact: 'Without keyword rankings, the site receives no organic search traffic. This is the foundation of SEO.',
+      effort: 'high',
+    });
+    return;
+  }
+
+  const highVolume = domainKeywords.filter(k => k.searchVolume >= 1000);
+  const medVolume = domainKeywords.filter(k => k.searchVolume >= 100 && k.searchVolume < 1000);
+  const lowVolume = domainKeywords.filter(k => k.searchVolume > 0 && k.searchVolume < 100);
+
+  if (highVolume.length === 0 && medVolume.length < 5) {
+    findings.push({
+      id: 'kw-low-volume-keywords',
+      title: 'Ranking for Low-Volume Keywords Only',
+      description: `The site ranks for ${domainKeywords.length} keywords, but most have very low search volume. This limits traffic potential.`,
+      severity: 'medium',
+      category: 'keywords',
+      subcategory: 'Coverage',
+      currentValue: `${highVolume.length} high-vol, ${medVolume.length} mid-vol, ${lowVolume.length} low-vol keywords`,
+      recommendedValue: 'Target keywords with 100+ monthly searches',
+      howToFix: 'Research and target keywords with higher search volumes. Build topical authority with content clusters: one "pillar" page targeting a higher-volume keyword, with supporting pages targeting related long-tail keywords.',
+      impact: 'Ranking for higher-volume keywords dramatically increases organic traffic potential.',
+      effort: 'medium',
+    });
+  }
+}
+
+function checkHighValueOpportunities(
+  relatedKeywords: DataforSEOKeywordData[],
+  domainKeywords: DataforSEOKeywordData[],
+  findings: Finding[]
+) {
+  if (relatedKeywords.length === 0) return;
+
+  const domainKwSet = new Set(domainKeywords.map(k => k.keyword.toLowerCase()));
+
+  const opportunities = relatedKeywords
+    .filter(k => !domainKwSet.has(k.keyword.toLowerCase()) && k.searchVolume >= 100)
+    .sort((a, b) => b.searchVolume - a.searchVolume);
+
+  if (opportunities.length > 0) {
+    const topOpps = opportunities.slice(0, 10);
+    const oppList = topOpps
+      .map(k => `  "${k.keyword}" — ${k.searchVolume.toLocaleString()} monthly searches, $${k.cpc.toFixed(2)} CPC`)
+      .join('\n');
+
+    findings.push({
+      id: 'kw-content-opportunities',
+      title: `${opportunities.length} Content Opportunities Identified`,
+      description: 'Related keywords with search volume that the site doesn\'t currently rank for. These represent content gaps that could drive new traffic.',
+      severity: 'info',
+      category: 'keywords',
+      subcategory: 'Opportunities',
+      currentValue: `${opportunities.length} untapped related keywords`,
+      recommendedValue: 'Create content targeting high-opportunity keywords',
+      howToFix: `Consider creating content for these keywords:\n${oppList}\n\nFor each keyword: research the search intent, analyze the top-ranking pages, and create content that is more comprehensive and useful.`,
+      impact: 'Each new keyword ranking represents a new traffic source. Content targeting these keywords has a high probability of ranking since they are closely related to your existing content.',
+      effort: 'medium',
+    });
+  }
+}
+
+function checkCompetitionLevels(domainKeywords: DataforSEOKeywordData[], findings: Finding[]) {
+  if (domainKeywords.length < 5) return;
+
+  const highCompetition = domainKeywords.filter(k => k.competition > 0.7 && k.searchVolume >= 100);
+  const lowCompetition = domainKeywords.filter(k => k.competition < 0.3 && k.searchVolume >= 100);
+
+  if (highCompetition.length > domainKeywords.length * 0.5 && lowCompetition.length < 3) {
+    findings.push({
+      id: 'kw-high-competition-focus',
+      title: 'Most Target Keywords Are Highly Competitive',
+      description: `${highCompetition.length} of your keywords have high competition. Consider diversifying into lower-competition keywords for easier wins.`,
+      severity: 'info',
+      category: 'keywords',
+      subcategory: 'Strategy',
+      currentValue: `${highCompetition.length} high-competition keywords`,
+      recommendedValue: 'Mix of high and low-competition keyword targets',
+      howToFix: 'Target a mix of keyword difficulties. Use long-tail variations of your main keywords, which tend to have lower competition and higher conversion rates. Build authority on easier keywords first, then compete for harder ones.',
+      impact: 'A balanced keyword strategy provides both short-term wins (low-competition) and long-term growth (high-competition).',
+      effort: 'medium',
+    });
+  }
+}
+
+// ============================================================
+// Keyword Intelligence — Helpers
+// ============================================================
+
+function deduplicateKeywords(keywords: DataforSEOKeywordData[]): DataforSEOKeywordData[] {
+  const seen = new Set<string>();
+  return keywords.filter(k => {
+    const lower = k.keyword.toLowerCase();
+    if (seen.has(lower)) return false;
+    seen.add(lower);
+    return true;
+  });
 }

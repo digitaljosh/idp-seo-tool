@@ -30,7 +30,6 @@ program
   .option('--dfs-login <login>', 'DataforSEO API login')
   .option('--dfs-password <password>', 'DataforSEO API password')
   .option('--skip-backlinks', 'Skip backlink analysis')
-  .option('--ke-api-key <key>', 'Keywords Everywhere API key')
   .option('--skip-keywords', 'Skip keyword intelligence analysis')
   .option('--seed-keywords <keywords...>', 'Seed keywords for keyword research')
   .option('-c, --competitors <urls...>', 'Competitor URLs to compare against (up to 3)')
@@ -73,7 +72,6 @@ program
         dataforseoLogin: options.dfsLogin,
         dataforseoPassword: options.dfsPassword,
         skipBacklinks: options.skipBacklinks,
-        keApiKey: options.keApiKey,
         skipKeywords: options.skipKeywords,
         seedKeywords: options.seedKeywords,
         onProgress: (step, detail) => {
@@ -195,11 +193,11 @@ function displayOverview(report: AuditReport) {
   }
 
   if (report.keywordData && report.keywordData.length > 0) {
-    console.log(chalk.cyan.bold('  Keyword Intelligence (Keywords Everywhere):'));
+    console.log(chalk.cyan.bold('  Keyword Intelligence (DataforSEO):'));
     console.log(chalk.white(`    ${report.keywordData.length} keywords tracked`));
-    const topKw = report.keywordData.filter(k => k.vol > 0).sort((a, b) => b.vol - a.vol).slice(0, 3);
+    const topKw = report.keywordData.filter(k => k.searchVolume > 0).sort((a, b) => b.searchVolume - a.searchVolume).slice(0, 3);
     if (topKw.length > 0) {
-      topKw.forEach(k => console.log(chalk.white(`    "${k.keyword}" — ${k.vol.toLocaleString()} mo. searches, $${k.cpc.toFixed(2)} CPC`)));
+      topKw.forEach(k => console.log(chalk.white(`    "${k.keyword}" — ${k.searchVolume.toLocaleString()} mo. searches, $${k.cpc.toFixed(2)} CPC`)));
     }
     console.log('');
   }
@@ -387,13 +385,13 @@ function displayBacklinks(report: AuditReport) {
 
 function displayKeywords(report: AuditReport) {
   if (!report.keywordData || report.keywordData.length === 0) return;
-  const kws = report.keywordData.filter(k => k.vol > 0).sort((a, b) => b.vol - a.vol);
+  const kws = report.keywordData.filter(k => k.searchVolume > 0).sort((a, b) => b.searchVolume - a.searchVolume);
   console.log(`\n  ${chalk.bold.white('Keyword Intelligence')}\n`);
   console.log(chalk.white(`  ${report.keywordData.length} keywords tracked, ${kws.length} with search volume\n`));
   const t = new Table({ head: ['Keyword', 'Volume', 'CPC', 'Competition'].map(h => chalk.white.bold(h)), style: { head: [], border: ['gray'] } });
   kws.slice(0, 25).forEach(k => {
     const compLabel = k.competition > 0.7 ? chalk.red('High') : k.competition > 0.3 ? chalk.yellow('Med') : chalk.green('Low');
-    t.push([k.keyword.slice(0, 40), k.vol.toLocaleString(), `$${k.cpc.toFixed(2)}`, compLabel]);
+    t.push([k.keyword.slice(0, 40), k.searchVolume.toLocaleString(), `$${k.cpc.toFixed(2)}`, compLabel]);
   });
   console.log(t.toString() + '\n');
 }

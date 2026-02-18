@@ -39,13 +39,6 @@ const FIELDS: SettingField[] = [
     type: 'password',
     placeholder: 'API password',
   },
-  {
-    key: 'keApiKey',
-    label: 'Keywords Everywhere API Key',
-    description: 'API key from Keywords Everywhere browser extension settings',
-    type: 'password',
-    placeholder: 'Your API key',
-  },
 ];
 
 export default function SettingsPage() {
@@ -141,13 +134,6 @@ export default function SettingsPage() {
             <li>Sign up at dataforseo.com (includes $1 free credit)</li>
             <li>Go to app.dataforseo.com/api-access</li>
             <li>Copy your API login and password</li>
-          </ol>
-
-          <p style={{ fontWeight: 600, marginTop: 16 }}>Keywords Everywhere</p>
-          <ol style={{ marginLeft: 20, color: 'var(--text-secondary)' }}>
-            <li>Install the Keywords Everywhere browser extension</li>
-            <li>Purchase credits ($10 = 100K lookups)</li>
-            <li>Find your API key in the extension settings</li>
           </ol>
         </div>
       </div>
